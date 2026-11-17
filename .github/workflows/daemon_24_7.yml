@@ -1,0 +1,104 @@
+name: Cloud 24-7 Bots Daemon
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Watchdog automático cada 20 minutos: si el daemon ya está activo, sale en 1s sin crear colas de espera
+    - cron: '*/20 * * * *'
+
+jobs:
+  daemon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Verificar si el Daemon ya está activo (Sin colas de espera)
+        id: check_active
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          EVENT_NAME: ${{ github.event_name }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: |
+          python -c "
+          import json, os, urllib.request
+          ev = os.environ.get('EVENT_NAME', '')
+          cur_id = str(os.environ.get('CURRENT_RUN_ID', ''))
+          pat = os.environ.get('GH_PAT', '')
+          skip = 'false'
+          if ev == 'schedule' and pat:
+              req = urllib.request.Request(
+                  'https://api.github.com/repos/Grostar/grostar-cloud-daemon/actions/runs?status=in_progress&per_page=5',
+                  headers={'Authorization': f'token {pat}', 'Accept': 'application/vnd.github.v3+json'}
+              )
+              runs = json.loads(urllib.request.urlopen(req, timeout=15).read().decode()).get('workflow_runs', [])
+              if any(str(r.get('id')) != cur_id for r in runs):
+                  skip = 'true'
+                  print('Daemon 24/7 ya está activo en línea. Saliendo en 1s sin crear cola de espera.')
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f'SKIP_DAEMON={skip}\n')
+          "
+
+      - name: Descargar orquestador
+        if: env.SKIP_DAEMON != 'true'
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        if: env.SKIP_DAEMON != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clonar repositorio de Fútbol 7 e instalar dependencias
+        if: env.SKIP_DAEMON != 'true'
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
+          python -m pip install --upgrade pip -q
+          pip install -r /tmp/futbol7/requirements.txt -q
+          playwright install --with-deps chromium >/dev/null 2>&1
+
+      - name: Ejecutar Asistente 24/7 Fútbol 7 Antequera
+        if: env.SKIP_DAEMON != 'true'
+        env:
+          TZ: 'Europe/Madrid'
+          MAX_RUNTIME_SECONDS: '19200'
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          FUTBOL_BOT_TOKEN: ${{ secrets.FUTBOL_BOT_TOKEN }}
+          FUTBOL_CHAT_ID: ${{ secrets.FUTBOL_CHAT_ID }}
+          CRONOS_PASS_GROSTAR: ${{ secrets.CRONOS_PASS_GROSTAR }}
+          CRONOS_PASS_MRJAVI: ${{ secrets.CRONOS_PASS_MRJAVI }}
+        run: |
+          python supervisor.py
+
+      - name: Respaldo de relevo continuo automático
+        if: always() && env.SKIP_DAEMON != 'true'
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: |
+          python -c "
+          import json, os, urllib.request
+          pat = os.environ.get('GH_PAT', '')
+          cur_id = str(os.environ.get('CURRENT_RUN_ID', ''))
+          req = urllib.request.Request(
+              'https://api.github.com/repos/Grostar/grostar-cloud-daemon/actions/runs?per_page=5',
+              headers={'Authorization': f'token {pat}', 'Accept': 'application/vnd.github.v3+json'}
+          )
+          runs = json.loads(urllib.request.urlopen(req, timeout=15).read().decode()).get('workflow_runs', [])
+          other_active = any(
+              str(r.get('id')) != cur_id and r.get('status') in ('queued', 'waiting', 'in_progress', 'pending')
+              for r in runs
+          )
+          if not other_active:
+              d_req = urllib.request.Request(
+                  'https://api.github.com/repos/Grostar/grostar-cloud-daemon/actions/workflows/daemon_24_7.yml/dispatches',
+                  data=json.dumps({'ref': 'main'}).encode(),
+                  headers={'Authorization': f'token {pat}', 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json'},
+                  method='POST'
+              )
+              urllib.request.urlopen(d_req, timeout=15)
+              print('Relevo 24/7 disparado automáticamente.')
+          else:
+              print('El contenedor de relevo ya está activo en línea.')
+          "
