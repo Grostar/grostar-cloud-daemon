@@ -35,12 +35,41 @@ jobs:
           rm -rf /tmp/futbol7
           git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
 
+      - name: Comprobar si se requiere acción (Filtro rápido 1s)
+        id: check_needed
+        working-directory: /tmp/futbol7
+        env:
+          TZ: 'Europe/Madrid'
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 - << 'EOF'
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          tz = ZoneInfo("Europe/Madrid")
+          now = datetime.now(tz)
+          ev = os.environ.get("EVENT_NAME", "")
+          skip = "false"
+
+          # En modo schedule, omitir horas UTC correspondientes a otra estación (antes de 15:00 viernes o antes de 22:00 sábado)
+          if ev == "schedule":
+              if (now.weekday() == 4 and now.hour < 15) or (now.weekday() == 5 and now.hour < 22):
+                  print(f"Hora previa a ventana de recordatorio ({now.strftime('%H:%M')} Madrid). Omitiendo en 1s.")
+                  skip = "true"
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"SKIP_REMINDER={skip}\n")
+          EOF
+
       - name: Configurar Python
+        if: env.SKIP_REMINDER != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Instalar dependencias
+        if: env.SKIP_REMINDER != 'true'
         run: |
           python -m pip install --upgrade pip -q
           pip install -r /tmp/futbol7/requirements.txt -q
@@ -49,6 +78,7 @@ jobs:
           fi
 
       - name: Procesar Recordatorio / Anulación
+        if: env.SKIP_REMINDER != 'true'
         working-directory: /tmp/futbol7
         env:
           TZ: 'Europe/Madrid'
@@ -61,6 +91,24 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.FUTBOL_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.FUTBOL_CHAT_ID }}
         run: |
+          python3 - << 'EOF'
+          import json, os
+          if os.path.exists("config.json"):
+              try:
+                  cfg = json.load(open("config.json", encoding="utf-8"))
+                  for r in cfg.get("rutinas", {}).values():
+                      for k in ("email", "password", "titular"):
+                          val = str(r.get(k, "")).strip()
+                          if len(val) >= 4:
+                              print(f"::add-mask::{val}")
+                  notif = cfg.get("notificaciones", {})
+                  for k in ("telegram_token", "telegram_chat_id"):
+                      val = str(notif.get(k, "")).strip()
+                      if len(val) >= 4:
+                          print(f"::add-mask::{val}")
+              except Exception:
+                  pass
+          EOF
           git pull --rebase --autostash origin main || true
           if [ "$ACCION" = "forzar_anulacion" ]; then
             echo "Forzando anulación de reserva..."
@@ -72,7 +120,7 @@ jobs:
           fi
 
       - name: Actualizar registro de reservas en repositorio privado
-        if: always()
+        if: always() && env.SKIP_REMINDER != 'true'
         working-directory: /tmp/futbol7
         run: |
           git config --local user.email "action@github.com"

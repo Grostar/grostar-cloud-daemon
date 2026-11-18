@@ -68,10 +68,17 @@ jobs:
 
           tz = ZoneInfo("Europe/Madrid")
           now = datetime.now(tz)
+          ev_name = os.environ.get("EVENT_NAME", "")
           modo = "domingo" if now.weekday() == 6 else ("martes" if now.weekday() == 1 else "")
           skip = "false"
 
-          if modo and os.path.exists("registro_reservas.json"):
+          # 0. Si es disparo por schedule fuera de la hora 21:xx Madrid (ej. 19:40 UTC en invierno = 20:40 Madrid, o 20:40 UTC en verano = 22:40 Madrid), salir en 1s
+          if ev_name == "schedule" and now.hour != 21:
+              print(f"Cron de estación horaria alternativa ({now.strftime('%H:%M')} Madrid != 21:xx). Omitiendo en 1s.")
+              skip = "true"
+
+          # 1. Comprobar registro_reservas.json actualizado hoy como activa/confirmada
+          if skip == "false" and modo and os.path.exists("registro_reservas.json"):
               try:
                   reg = json.load(open("registro_reservas.json", encoding="utf-8")).get(modo, {})
                   upd = str(reg.get("updated_at") or "")
@@ -81,10 +88,10 @@ jobs:
               except Exception:
                   pass
 
+          # 2. Evitar colas duplicadas tras las 22:00 (sin que un dry-run diurno o cron de otra estación bloquee las 22:00)
           if skip == "false" and os.environ.get("GH_PAT"):
               try:
                   cur_id = str(os.environ.get("CUR_RUN_ID", ""))
-                  ev_name = os.environ.get("EVENT_NAME", "")
                   token = os.environ["GH_PAT"]
                   headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
                   req = urllib.request.Request(
@@ -104,14 +111,15 @@ jobs:
                       if cr.strftime("%Y-%m-%d") != today_str:
                           continue
                       rid = r.get("id")
-                      if r.get("conclusion") == "success":
-                          print(f"Run previo {rid} ya completó hoy con éxito. Omitiendo duplicado.")
-                          skip = "true"
-                          break
-                      if up >= cutoff_22 and (up - cr).total_seconds() >= 120 and (cur_cr < up or ev_name == "schedule"):
-                          print(f"Run previo {rid} ya ejecutó la ventana real de las 22:00 hoy. Omitiendo cola redundante.")
-                          skip = "true"
-                          break
+                      if up >= cutoff_22 and (up - cr).total_seconds() >= 60:
+                          if r.get("conclusion") == "success":
+                              print(f"Run previo {rid} ya completó la ventana de las 22:00 hoy con éxito. Omitiendo duplicado.")
+                              skip = "true"
+                              break
+                          if cur_cr < up or ev_name == "schedule":
+                              print(f"Run previo {rid} ya ejecutó la ventana real de las 22:00 hoy ({cr.strftime('%H:%M')} -> {up.strftime('%H:%M')}). Omitiendo cola redundante.")
+                              skip = "true"
+                              break
               except Exception as e:
                   print("Aviso check duplicados:", e)
 
@@ -149,6 +157,24 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.FUTBOL_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.FUTBOL_CHAT_ID }}
         run: |
+          python3 - << 'EOF'
+          import json, os
+          if os.path.exists("config.json"):
+              try:
+                  cfg = json.load(open("config.json", encoding="utf-8"))
+                  for r in cfg.get("rutinas", {}).values():
+                      for k in ("email", "password", "titular"):
+                          val = str(r.get(k, "")).strip()
+                          if len(val) >= 4:
+                              print(f"::add-mask::{val}")
+                  notif = cfg.get("notificaciones", {})
+                  for k in ("telegram_token", "telegram_chat_id"):
+                      val = str(notif.get(k, "")).strip()
+                      if len(val) >= 4:
+                          print(f"::add-mask::{val}")
+              except Exception:
+                  pass
+          EOF
           git pull --rebase origin main || true
 
           MODO="${INPUT_MODO:-auto}"
