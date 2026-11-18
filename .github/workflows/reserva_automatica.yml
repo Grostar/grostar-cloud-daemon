@@ -1,0 +1,183 @@
+name: Reserva Automática Fútbol 7 Parquesol
+
+on:
+  schedule:
+    # Respaldo automático los Domingos (0) y Martes (2)
+    # 20:40 UTC (invierno CET = 21:40 Madrid) / 19:40 UTC (verano CEST = 21:40 Madrid)
+    - cron: '40 19,20 * * 0,2'
+
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'Modo de reserva (auto, domingo, martes)'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - domingo
+          - martes
+      dry_run:
+        description: 'Modo simulación (sin confirmar reserva)'
+        required: false
+        default: false
+        type: boolean
+      sync_22:
+        description: 'Esperar hasta las 22:00:00 exactas'
+        required: false
+        default: true
+        type: boolean
+      fecha:
+        description: 'Fecha específica opcional (YYYY-MM-DD)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  reservar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: reserva-automatica-futbol7
+      cancel-in-progress: false
+    permissions:
+      actions: read
+
+    steps:
+      - name: Clonar repositorio privado de Fútbol 7
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          rm -rf /tmp/futbol7
+          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
+
+      - name: Verificar si ya se ejecutó la reserva de hoy (Evitar duplicados)
+        id: check_dup
+        if: github.event.inputs.dry_run != 'true' && github.event.inputs.fecha == ''
+        working-directory: /tmp/futbol7
+        env:
+          TZ: 'Europe/Madrid'
+          GH_PAT: ${{ secrets.GH_PAT }}
+          CUR_RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 - << 'EOF'
+          import json, os, urllib.request
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          tz = ZoneInfo("Europe/Madrid")
+          now = datetime.now(tz)
+          modo = "domingo" if now.weekday() == 6 else ("martes" if now.weekday() == 1 else "")
+          skip = "false"
+
+          if modo and os.path.exists("registro_reservas.json"):
+              try:
+                  reg = json.load(open("registro_reservas.json", encoding="utf-8")).get(modo, {})
+                  upd = str(reg.get("updated_at") or "")
+                  if upd.startswith(now.strftime("%Y-%m-%d")) and reg.get("estado") in ("activa", "confirmada", "confirmado"):
+                      print(f"Reserva ({modo}) ya registrada activa hoy ({upd}). Omitiendo ejecución redundante.")
+                      skip = "true"
+              except Exception:
+                  pass
+
+          if skip == "false" and os.environ.get("GH_PAT"):
+              try:
+                  cur_id = str(os.environ.get("CUR_RUN_ID", ""))
+                  ev_name = os.environ.get("EVENT_NAME", "")
+                  token = os.environ["GH_PAT"]
+                  headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
+                  req = urllib.request.Request(
+                      "https://api.github.com/repos/Grostar/grostar-cloud-daemon/actions/workflows/reserva_automatica.yml/runs?per_page=10",
+                      headers=headers,
+                  )
+                  runs = json.loads(urllib.request.urlopen(req, timeout=10).read().decode()).get("workflow_runs", [])
+                  cur_run = next((x for x in runs if str(x.get("id")) == cur_id), None)
+                  cur_cr = datetime.fromisoformat(cur_run["created_at"].replace("Z", "+00:00")).astimezone(tz) if cur_run else now
+                  today_str = now.strftime("%Y-%m-%d")
+                  cutoff_22 = now.replace(hour=21, minute=59, second=55, microsecond=0)
+                  for r in runs:
+                      if str(r.get("id")) == cur_id or r.get("status") != "completed":
+                          continue
+                      cr = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")).astimezone(tz)
+                      up = datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")).astimezone(tz)
+                      if cr.strftime("%Y-%m-%d") != today_str:
+                          continue
+                      rid = r.get("id")
+                      if r.get("conclusion") == "success":
+                          print(f"Run previo {rid} ya completó hoy con éxito. Omitiendo duplicado.")
+                          skip = "true"
+                          break
+                      if up >= cutoff_22 and (up - cr).total_seconds() >= 120 and (cur_cr < up or ev_name == "schedule"):
+                          print(f"Run previo {rid} ya ejecutó la ventana real de las 22:00 hoy. Omitiendo cola redundante.")
+                          skip = "true"
+                          break
+              except Exception as e:
+                  print("Aviso check duplicados:", e)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"SKIP_DUPLICATE={skip}\n")
+          EOF
+
+      - name: Configurar Python
+        if: env.SKIP_DUPLICATE != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        if: env.SKIP_DUPLICATE != 'true'
+        run: |
+          python -m pip install --upgrade pip -q
+          pip install -r /tmp/futbol7/requirements.txt -q
+          playwright install --with-deps chromium >/dev/null 2>&1
+
+      - name: Ejecutar Bot de Reserva
+        if: env.SKIP_DUPLICATE != 'true'
+        working-directory: /tmp/futbol7
+        env:
+          TZ: 'Europe/Madrid'
+          CLOUD_DAEMON_24_7: 'false'
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_MODO: ${{ github.event.inputs.modo }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_SYNC_22: ${{ github.event.inputs.sync_22 }}
+          INPUT_FECHA: ${{ github.event.inputs.fecha }}
+          GITHUB_PAT: ${{ secrets.GH_PAT }}
+          CRONOS_PASS_GROSTAR: ${{ secrets.CRONOS_PASS_GROSTAR }}
+          CRONOS_PASS_MRJAVI: ${{ secrets.CRONOS_PASS_MRJAVI }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.FUTBOL_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.FUTBOL_CHAT_ID }}
+        run: |
+          git pull --rebase origin main || true
+
+          MODO="${INPUT_MODO:-auto}"
+          EXTRA_ARGS=""
+          SYNC="${INPUT_SYNC_22:-true}"
+          if [ "$EVENT_NAME" = "schedule" ] || [ "$SYNC" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --sync-22"
+          fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --dry-run"
+          fi
+          if [ -n "$INPUT_FECHA" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --date $INPUT_FECHA"
+          fi
+
+          echo "Lanzando reserva con modo: $MODO y argumentos: $EXTRA_ARGS"
+          python reserva_bot.py --modo "$MODO" $EXTRA_ARGS
+
+      - name: Actualizar registro de reservas en repositorio privado
+        if: (!cancelled()) && github.event.inputs.dry_run != 'true' && env.SKIP_DUPLICATE != 'true'
+        working-directory: /tmp/futbol7
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GrostarCloudDaemon"
+          git add registro_reservas.json screenshots/reserva_confirmada*.png 2>/dev/null || git add registro_reservas.json || true
+          if git diff --staged --quiet; then
+            echo "Sin cambios en el registro de reservas."
+          else
+            git commit -m "Actualizar datos de reserva realizada [skip ci]"
+            git pull --rebase --autostash origin main || true
+            git push origin main || true
+          fi

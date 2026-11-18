@@ -1,0 +1,87 @@
+name: Recordatorio y Anulación Fútbol 7 (iPhone)
+
+on:
+  schedule:
+    # Respaldo de comprobación cada 30 min en ventana de partido (además del bucle 20s del daemon 24/7)
+    - cron: '5,35 13,14,15,16,17,18,19,20 * * 5'
+    - cron: '5,35 20,21,22 * * 6'
+
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: 'Acción a realizar'
+        required: true
+        default: 'recordatorio'
+        type: choice
+        options:
+          - recordatorio
+          - forzar_anulacion
+
+jobs:
+  gestionar_confirmacion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: recordatorio-partido-futbol7
+      cancel-in-progress: false
+    permissions:
+      actions: read
+
+    steps:
+      - name: Clonar repositorio privado de Fútbol 7
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          rm -rf /tmp/futbol7
+          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip -q
+          pip install -r /tmp/futbol7/requirements.txt -q
+          if [ "${{ github.event.inputs.accion }}" = "forzar_anulacion" ]; then
+            playwright install --with-deps chromium >/dev/null 2>&1
+          fi
+
+      - name: Procesar Recordatorio / Anulación
+        working-directory: /tmp/futbol7
+        env:
+          TZ: 'Europe/Madrid'
+          CLOUD_DAEMON_24_7: 'false'
+          EVENT_NAME: ${{ github.event_name }}
+          ACCION: ${{ github.event.inputs.accion || 'recordatorio' }}
+          GITHUB_PAT: ${{ secrets.GH_PAT }}
+          CRONOS_PASS_GROSTAR: ${{ secrets.CRONOS_PASS_GROSTAR }}
+          CRONOS_PASS_MRJAVI: ${{ secrets.CRONOS_PASS_MRJAVI }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.FUTBOL_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.FUTBOL_CHAT_ID }}
+        run: |
+          git pull --rebase --autostash origin main || true
+          if [ "$ACCION" = "forzar_anulacion" ]; then
+            echo "Forzando anulación de reserva..."
+            python anular_reserva.py --modo auto
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            python notificador_telegram.py --force
+          else
+            python notificador_telegram.py
+          fi
+
+      - name: Actualizar registro de reservas en repositorio privado
+        if: always()
+        working-directory: /tmp/futbol7
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GrostarCloudDaemon"
+          git add registro_reservas.json screenshots/reserva_anulada*.png 2>/dev/null || git add registro_reservas.json || true
+          if git diff --staged --quiet; then
+            echo "Sin cambios en el registro de reservas."
+          else
+            git commit -m "Actualizar estado de reserva [skip ci]" || true
+            git pull --rebase --autostash origin main || true
+            git push origin main || true
+          fi

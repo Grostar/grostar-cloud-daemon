@@ -45,7 +45,7 @@ def wait_for_older_daemon_runs_to_finish():
     if not cur_id:
         return
     for _ in range(28):
-        st, data = gh_api_call("GET", "/repos/Grostar/grostar-cloud-daemon/actions/runs?status=in_progress&per_page=5")
+        st, data = gh_api_call("GET", "/repos/Grostar/grostar-cloud-daemon/actions/workflows/daemon_24_7.yml/runs?status=in_progress&per_page=8")
         if st != 200:
             break
         runs = data.get("workflow_runs", [])
@@ -71,7 +71,7 @@ def wait_for_older_daemon_runs_to_finish():
 
 def trigger_next_daemon_cycle():
     cur_id = str(os.environ.get("CURRENT_RUN_ID", "")).strip()
-    st, data = gh_api_call("GET", "/repos/Grostar/grostar-cloud-daemon/actions/runs?per_page=5")
+    st, data = gh_api_call("GET", "/repos/Grostar/grostar-cloud-daemon/actions/workflows/daemon_24_7.yml/runs?per_page=8")
     if st == 200:
         runs = data.get("workflow_runs", [])
         newer_active = any(
@@ -93,7 +93,7 @@ def trigger_next_daemon_cycle():
 def ensure_booking_workflow_started_on_time(triggered_dates: set):
     """
     Garantiza 0 segundos de delay en el arranque de la reserva automática los Martes y Domingos a las 21:44:30:
-    Si el cron de GitHub Actions lleva retraso a las 21:44:30, dispara workflow_dispatch al instante (arranca en 2s).
+    Dispara el workflow de reserva dentro del orquestador público grostar-cloud-daemon (sin consumo de cuota privada).
     """
     now = datetime.now(MADRID_TZ)
     if now.weekday() not in (1, 6):
@@ -102,12 +102,11 @@ def ensure_booking_workflow_started_on_time(triggered_dates: set):
     if date_key in triggered_dates:
         return
     if now.hour == 21 and 44 <= now.minute <= 50:
-        st, data = gh_api_call("GET", "/repos/Grostar/reservas-futbol7-antequera/actions/runs?per_page=5")
+        st, data = gh_api_call("GET", "/repos/Grostar/grostar-cloud-daemon/actions/workflows/reserva_automatica.yml/runs?per_page=5")
         if st == 200:
             runs = data.get("workflow_runs", [])
             already_running = any(
                 r.get("status") in ("in_progress", "queued", "waiting", "pending")
-                and "reserva" in str(r.get("name", "")).lower()
                 for r in runs
             )
             if already_running:
@@ -115,7 +114,7 @@ def ensure_booking_workflow_started_on_time(triggered_dates: set):
                 return
         st_d, _ = gh_api_call(
             "POST",
-            "/repos/Grostar/reservas-futbol7-antequera/actions/workflows/reserva_automatica.yml/dispatches",
+            "/repos/Grostar/grostar-cloud-daemon/actions/workflows/reserva_automatica.yml/dispatches",
             {
                 "ref": "main",
                 "inputs": {"modo": "auto", "dry_run": "false", "sync_22": "true", "fecha": ""},
