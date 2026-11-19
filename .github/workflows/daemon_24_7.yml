@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 350
     steps:
       - name: Verificar si el Daemon ya está activo (Sin colas de espera)
+        continue-on-error: true
         id: check_active
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -41,16 +42,19 @@ jobs:
           EOF
 
       - name: Descargar orquestador
+        continue-on-error: true
         if: env.SKIP_DAEMON != 'true'
         uses: actions/checkout@v4
 
       - name: Configurar Python 3.12
+        continue-on-error: true
         if: env.SKIP_DAEMON != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Clonar repositorio de Fútbol 7 e instalar dependencias
+        continue-on-error: true
         if: env.SKIP_DAEMON != 'true'
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -61,6 +65,7 @@ jobs:
           playwright install --with-deps chromium >/dev/null 2>&1
 
       - name: Ejecutar Asistente 24/7 Fútbol 7 Antequera
+        continue-on-error: true
         if: env.SKIP_DAEMON != 'true'
         env:
           TZ: 'Europe/Madrid'
@@ -75,6 +80,7 @@ jobs:
           python supervisor.py
 
       - name: Respaldo de relevo continuo automático
+        continue-on-error: true
         if: always() && env.SKIP_DAEMON != 'true'
         env:
           GH_PAT: ${{ secrets.GH_PAT }}

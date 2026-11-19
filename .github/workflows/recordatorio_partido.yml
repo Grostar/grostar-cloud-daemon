@@ -29,6 +29,7 @@ jobs:
 
     steps:
       - name: Clonar repositorio privado de Fútbol 7
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
@@ -36,6 +37,7 @@ jobs:
           git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
 
       - name: Comprobar si se requiere acción (Filtro rápido 1s)
+        continue-on-error: true
         id: check_needed
         working-directory: /tmp/futbol7
         env:
@@ -63,12 +65,14 @@ jobs:
           EOF
 
       - name: Configurar Python
+        continue-on-error: true
         if: env.SKIP_REMINDER != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Instalar dependencias
+        continue-on-error: true
         if: env.SKIP_REMINDER != 'true'
         run: |
           python -m pip install --upgrade pip -q
@@ -78,6 +82,7 @@ jobs:
           fi
 
       - name: Procesar Recordatorio / Anulación
+        continue-on-error: true
         if: env.SKIP_REMINDER != 'true'
         working-directory: /tmp/futbol7
         env:
@@ -120,6 +125,7 @@ jobs:
           fi
 
       - name: Actualizar registro de reservas en repositorio privado
+        continue-on-error: true
         if: always() && env.SKIP_REMINDER != 'true'
         working-directory: /tmp/futbol7
         run: |

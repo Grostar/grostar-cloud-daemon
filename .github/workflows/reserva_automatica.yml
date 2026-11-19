@@ -45,6 +45,7 @@ jobs:
 
     steps:
       - name: Clonar repositorio privado de Fútbol 7
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
@@ -52,6 +53,7 @@ jobs:
           git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
 
       - name: Verificar si ya se ejecutó la reserva de hoy (Evitar duplicados)
+        continue-on-error: true
         id: check_dup
         if: github.event.inputs.dry_run != 'true' && github.event.inputs.fecha == ''
         working-directory: /tmp/futbol7
@@ -128,12 +130,14 @@ jobs:
           EOF
 
       - name: Configurar Python
+        continue-on-error: true
         if: env.SKIP_DUPLICATE != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Instalar dependencias
+        continue-on-error: true
         if: env.SKIP_DUPLICATE != 'true'
         run: |
           python -m pip install --upgrade pip -q
@@ -141,6 +145,7 @@ jobs:
           playwright install --with-deps chromium >/dev/null 2>&1
 
       - name: Ejecutar Bot de Reserva
+        continue-on-error: true
         if: env.SKIP_DUPLICATE != 'true'
         working-directory: /tmp/futbol7
         env:
@@ -194,6 +199,7 @@ jobs:
           python reserva_bot.py --modo "$MODO" $EXTRA_ARGS
 
       - name: Actualizar registro de reservas en repositorio privado
+        continue-on-error: true
         if: (!cancelled()) && github.event.inputs.dry_run != 'true' && env.SKIP_DUPLICATE != 'true'
         working-directory: /tmp/futbol7
         run: |
