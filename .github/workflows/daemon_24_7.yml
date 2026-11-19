@@ -59,7 +59,8 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
+          for i in 1 2 3; do rm -rf /tmp/futbol7 && git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7 && break || sleep 3; done
+          mkdir -p /tmp/futbol7
           python -m pip install --upgrade pip -q
           pip install -r /tmp/futbol7/requirements.txt -q
           playwright install --with-deps chromium >/dev/null 2>&1

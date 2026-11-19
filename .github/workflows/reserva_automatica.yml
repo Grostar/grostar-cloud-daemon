@@ -50,7 +50,8 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           rm -rf /tmp/futbol7
-          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7
+          for i in 1 2 3; do rm -rf /tmp/futbol7 && git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7 && break || sleep 3; done
+          mkdir -p /tmp/futbol7
 
       - name: Verificar si ya se ejecutó la reserva de hoy (Evitar duplicados)
         continue-on-error: true
