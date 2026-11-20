@@ -59,7 +59,7 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          for i in 1 2 3; do rm -rf /tmp/futbol7 && git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7 && break || sleep 3; done
+          for i in 1 2 3; do rm -rf /tmp/futbol7 && git clone "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7 && break || sleep 3; done
           mkdir -p /tmp/futbol7
           python -m pip install --upgrade pip -q
           pip install -r /tmp/futbol7/requirements.txt -q
@@ -78,6 +78,25 @@ jobs:
           CRONOS_PASS_GROSTAR: ${{ secrets.CRONOS_PASS_GROSTAR }}
           CRONOS_PASS_MRJAVI: ${{ secrets.CRONOS_PASS_MRJAVI }}
         run: |
+          python3 - << 'EOF'
+          import json, os
+          p = "/tmp/futbol7/config.json"
+          if os.path.exists(p):
+              try:
+                  cfg = json.load(open(p, encoding="utf-8"))
+                  for r in cfg.get("rutinas", {}).values():
+                      for k in ("email", "password", "titular"):
+                          val = str(r.get(k, "")).strip()
+                          if len(val) >= 4:
+                              print(f"::add-mask::{val}")
+                  notif = cfg.get("notificaciones", {})
+                  for k in ("telegram_token", "telegram_chat_id"):
+                      val = str(notif.get(k, "")).strip()
+                      if len(val) >= 4:
+                          print(f"::add-mask::{val}")
+              except Exception:
+                  pass
+          EOF
           python supervisor.py
 
       - name: Respaldo de relevo continuo automático
