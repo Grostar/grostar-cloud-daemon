@@ -151,8 +151,6 @@ def start_futbol_process():
         [sys.executable, "-u", "asistente_telegram.py"],
         cwd=FUTBOL_DIR,
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
     )
 
 
