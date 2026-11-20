@@ -1,11 +1,6 @@
 name: Recordatorio y Anulación Fútbol 7 (iPhone)
 
 on:
-  schedule:
-    # Respaldo de comprobación cada 30 min en ventana de partido (además del bucle 20s del daemon 24/7)
-    - cron: '5,35 13,14,15,16,17,18,19,20 * * 5'
-    - cron: '5,35 20,21,22 * * 6'
-
   workflow_dispatch:
     inputs:
       accion:
@@ -34,7 +29,7 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           rm -rf /tmp/futbol7
-          for i in 1 2 3; do rm -rf /tmp/futbol7 && git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7 && break || sleep 3; done
+          for i in 1 2 3; do rm -rf /tmp/futbol7 && git clone "https://x-access-token:${GH_PAT}@github.com/Grostar/reservas-futbol7-antequera.git" /tmp/futbol7 && break || sleep 3; done
           mkdir -p /tmp/futbol7
 
       - name: Comprobar si se requiere acción (Filtro rápido 1s)
